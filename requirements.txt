@@ -1,3 +1,4 @@
 flask
-pypdf
+pypdf[crypto]
 gunicorn
+cryptography
