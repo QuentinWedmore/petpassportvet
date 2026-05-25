@@ -2,7 +2,6 @@
 Pet Passport Vet - AHC PDF Generation Web Service
 Receives customer/vet data as JSON, returns a filled AHC PDF.
 Deploy to Render.com as a Python web service.
-DUMMY CHANGE TO FIX RENDER DEPLOYMENT ISSUE
 """
 
 import os
@@ -168,8 +167,22 @@ def fill_ahc_bytes(data):
 
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator"})
+    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "2.1"})
 
+
+
+@app.route("/debug", methods=["GET"])
+def debug():
+    test_data = {
+        "pet_species": "CANIS LUPUS FAMILIARIS",
+        "pet_sex": "MALE",
+        "pet_colour": "BLACK",
+        "pet_breed": "LABRADOR",
+        "pet_microchip": "958000080144977",
+        "pet_dob": "17/03/2023",
+    }
+    result = build_commodity_description2(test_data)
+    return jsonify({"i28_field": result, "repr": repr(result)})
 
 @app.route("/generate", methods=["POST"])
 def generate():
