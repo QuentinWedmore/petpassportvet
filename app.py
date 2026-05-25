@@ -1,7 +1,6 @@
 """
 Pet Passport Vet - AHC PDF Generation Web Service
 Receives customer/vet data as JSON, returns a filled AHC PDF.
-
 Deploy to Render.com as a Python web service.
 """
 
@@ -12,7 +11,6 @@ from pypdf import PdfReader, PdfWriter
 
 app = Flask(__name__)
 
-# Path to the blank French AHC template (included in repo)
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "French.pdf")
 
 # ============================================================
@@ -21,26 +19,61 @@ TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "French.pdf")
 
 def build_commodity_description2(d):
     """
-    Build the I.28 identification table using two-line column layout
-    matching the official completed AHC format.
+    Build the I.28 identification table using precise column positions
+    measured from official completed AHC examples.
+
+    Column start positions (chars):
+    Species: 0, Sex: 13, Colour: 20, Breed: 31, Microchip: 41,
+    ID system: 61, DOB: 80
     """
-    species_parts = d['pet_species'].split()
-    species_line1 = ' '.join(species_parts[:2]) if len(species_parts) >= 3 else d['pet_species']
-    species_line2 = ' '.join(species_parts[2:]) if len(species_parts) >= 3 else ''
+    species = d['pet_species']
+    sex = d['pet_sex']
+    colour = d['pet_colour']
+    breed = d['pet_breed']
+    chip = d['pet_microchip']
+    dob = d['pet_dob']
 
-    colour_parts = d['pet_colour'].split()
-    colour_line1 = ' '.join(colour_parts[:2]) if len(colour_parts) >= 3 else d['pet_colour']
-    colour_line2 = ' '.join(colour_parts[2:]) if len(colour_parts) >= 3 else ''
+    species_parts = species.split()
+    s1 = ' '.join(species_parts[:2]) if len(species_parts) >= 3 else species
+    s2 = ' '.join(species_parts[2:]) if len(species_parts) >= 3 else ''
 
-    breed_parts = d['pet_breed'].split()
-    breed_line1 = breed_parts[0] if len(breed_parts) >= 2 else d['pet_breed']
-    breed_line2 = ' '.join(breed_parts[1:]) if len(breed_parts) >= 2 else ''
+    colour_parts = colour.split()
+    c1 = ' '.join(colour_parts[:2]) if len(colour_parts) >= 3 else colour
+    c2 = ' '.join(colour_parts[2:]) if len(colour_parts) >= 3 else ''
 
-    line1 = (f"{species_line1:<12} {d['pet_sex']:<7} {colour_line1:<10} "
-             f"{breed_line1:<9} {d['pet_microchip']:<15}  {'TRANSPONDER':<17} {d['pet_dob']}")
-    line2 = f"{species_line2:<12}         {colour_line2:<10} {breed_line2}"
+    breed_parts = breed.split()
+    b1 = breed_parts[0] if len(breed_parts) >= 2 else breed
+    b2 = ' '.join(breed_parts[1:]) if len(breed_parts) >= 2 else ''
+
+    line1 = f"{s1:<13}{sex:<7}{c1:<11}{b1:<10}{chip:<20}{'TRANSPONDER':<19}{dob}"
+    line2 = f"{s2:<13}       {c2:<11}{b2}"
 
     return f"{line1}\r{line2}".rstrip()
+
+
+def format_address(raw_address):
+    """
+    Format address into max 4 lines fitting the Address1 field (153pt wide, 40pt tall).
+    Combines town and county, puts postcode on same line as county.
+    Input lines are split by newline characters.
+    """
+    lines = [l.strip() for l in raw_address.replace('\r', '\n').split('\n') if l.strip()]
+
+    if len(lines) <= 3:
+        return '\r'.join(lines)
+
+    # 4+ lines: combine the last two non-postcode lines if needed
+    # Typical UK address: line1, line2, town, county, postcode
+    # Strategy: keep street lines, combine county + postcode on last line
+    if len(lines) >= 4:
+        # Put postcode on same line as the line before it
+        postcode = lines[-1]
+        county = lines[-2]
+        combined = f"{county}, {postcode}"
+        result = lines[:-2] + [combined]
+        return '\r'.join(result[:4])
+
+    return '\r'.join(lines[:4])
 
 
 # ============================================================
@@ -48,10 +81,13 @@ def build_commodity_description2(d):
 # ============================================================
 
 def get_field_values(d):
+    raw_address = d.get("owner_address", "")
+    formatted_address = format_address(raw_address)
+
     return [
         # Part I - Consignor (owner)
         {"field_id": "Name1",                   "value": d.get("owner_name", "")},
-        {"field_id": "Address1",                "value": d.get("owner_address", "")},
+        {"field_id": "Address1",                "value": formatted_address},
         {"field_id": "Telephone1",              "value": d.get("owner_telephone", "")},
         {"field_id": "LCA",                     "value": "Animal and Plant Health Agency"},
 
@@ -67,14 +103,15 @@ def get_field_values(d):
         {"field_id": "Text1",                   "value": d.get("ahc_number", "")},
 
         # Part II - Vaccination table (Page 4)
+        # Text5 = Manufacturer name, Text13 = Vaccine name (confirmed from completed example)
         {"field_id": "Text2",   "value": d.get("pet_microchip", "")},
         {"field_id": "Text3",   "value": d.get("rabies_date", "")},
         {"field_id": "Text4",   "value": d.get("rabies_date", "")},
-        {"field_id": "Text5",   "value": d.get("vaccine_manufacturer", "")},
+        {"field_id": "Text5",   "value": d.get("vaccine_manufacturer", "").strip().upper()},
         {"field_id": "Text6",   "value": d.get("batch_number", "")},
         {"field_id": "Text7",   "value": d.get("valid_from", "")},
         {"field_id": "Text8",   "value": d.get("valid_to", "")},
-        {"field_id": "Text13",  "value": d.get("vaccine_name", "")},
+        {"field_id": "Text13",  "value": d.get("vaccine_name", "").strip().upper()},
 
         # Part II - Standard checkboxes for France
         {"field_id": "Check 2",  "value": "/Yes"},
@@ -130,22 +167,16 @@ def fill_ahc_bytes(data):
 
 @app.route("/", methods=["GET"])
 def health():
-    """Health check endpoint."""
     return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator"})
 
 
 @app.route("/generate", methods=["POST"])
 def generate():
-    """
-    Accepts JSON body with AHC data, returns filled PDF.
-    Called by the Google Apps Script in the spreadsheet.
-    """
     try:
         data = request.get_json()
         if not data:
             return jsonify({"error": "No JSON data received"}), 400
 
-        # Validate required fields
         required = ["owner_name", "pet_microchip", "pet_species"]
         missing = [f for f in required if not data.get(f)]
         if missing:
