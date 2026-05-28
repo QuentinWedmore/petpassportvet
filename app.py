@@ -109,10 +109,11 @@ def get_field_values(d):
         {"field_id": "Date",             "value": d.get("issue_date", "")},
         {"field_id": "Transponder", "value": d.get("pet_microchip", "")},
         {"field_id": "AHC number",  "value": d.get("ahc_number", "")},
-        {"field_id": "AHC number1", "value": d.get("ahc_number", "")},
-        {"field_id": "AHC number2", "value": d.get("ahc_number", "")},
-        {"field_id": "AHC number3", "value": d.get("ahc_number", "")},
-        {"field_id": "AHC number4", "value": d.get("ahc_number", "")},
+        # AHC number1-4 only filled for pets 2-5 respectively
+        {"field_id": "AHC number1", "value": d.get("ahc_number", "") if int(d.get("pet_quantity", 1)) >= 2 else ""},
+        {"field_id": "AHC number2", "value": d.get("ahc_number", "") if int(d.get("pet_quantity", 1)) >= 3 else ""},
+        {"field_id": "AHC number3", "value": d.get("ahc_number", "") if int(d.get("pet_quantity", 1)) >= 4 else ""},
+        {"field_id": "AHC number4", "value": d.get("ahc_number", "") if int(d.get("pet_quantity", 1)) >= 5 else ""},
         {"field_id": "Placedate",   "value": d.get("place_date", "")},
         {"field_id": "Check 16",    "value": "/Yes"},
         {"field_id": "Check 19",    "value": "/Yes"},
@@ -134,23 +135,30 @@ def fill_ahc_bytes(data):
     for page in writer.pages:
         writer.update_page_form_field_values(page, updates, auto_regenerate=False)
 
-    # Set Text1 (certificate reference) on the parent field so it
-    # propagates to all child fields across pages 1-8
+    # Set Text1 (certificate reference) on parent AND all child annotation objects
+    # The child fields appear on pages 1-8 in the II.a header area
     ref_number = data.get("ahc_number", "")
     try:
-        acro_fields = writer._root_object["/AcroForm"]["/Fields"]
-        for field_ref in acro_fields:
-            field = field_ref.get_object()
-            field_name = str(field.get("/T", ""))
-            if field_name == "Text1":
-                field[NameObject("/V")] = create_string_object(ref_number)
-                field[NameObject("/DV")] = create_string_object(ref_number)
-                if "/Kids" in field:
-                    for kid_ref in field["/Kids"]:
-                        kid = kid_ref.get_object()
-                        kid[NameObject("/V")] = create_string_object(ref_number)
+        for page in writer.pages:
+            if "/Annots" not in page:
+                continue
+            for annot in page["/Annots"]:
+                obj = annot.get_object()
+                name = str(obj.get("/T", ""))
+                parent = obj.get("/Parent")
+                # Set on named Text1 field
+                if name == "Text1":
+                    obj[NameObject("/V")] = create_string_object(ref_number)
+                    obj[NameObject("/DV")] = create_string_object(ref_number)
+                # Set on unnamed children of Text1
+                if not name and parent:
+                    parent_obj = parent.get_object()
+                    parent_name = str(parent_obj.get("/T", ""))
+                    if parent_name == "Text1":
+                        obj[NameObject("/V")] = create_string_object(ref_number)
+                        obj[NameObject("/DV")] = create_string_object(ref_number)
     except Exception:
-        pass  # Fall back to standard update if this fails
+        pass  # Fall back gracefully if this fails
 
     output = io.BytesIO()
     writer.write(output)
