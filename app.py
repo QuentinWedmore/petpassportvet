@@ -9,6 +9,7 @@ import os
 import io
 from flask import Flask, request, send_file, jsonify
 from pypdf import PdfReader, PdfWriter
+from pypdf.generic import NameObject, create_string_object
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -108,6 +109,10 @@ def get_field_values(d):
         {"field_id": "Date",             "value": d.get("issue_date", "")},
         {"field_id": "Transponder", "value": d.get("pet_microchip", "")},
         {"field_id": "AHC number",  "value": d.get("ahc_number", "")},
+        {"field_id": "AHC number1", "value": d.get("ahc_number", "")},
+        {"field_id": "AHC number2", "value": d.get("ahc_number", "")},
+        {"field_id": "AHC number3", "value": d.get("ahc_number", "")},
+        {"field_id": "AHC number4", "value": d.get("ahc_number", "")},
         {"field_id": "Placedate",   "value": d.get("place_date", "")},
         {"field_id": "Check 16",    "value": "/Yes"},
         {"field_id": "Check 19",    "value": "/Yes"},
@@ -128,6 +133,24 @@ def fill_ahc_bytes(data):
 
     for page in writer.pages:
         writer.update_page_form_field_values(page, updates, auto_regenerate=False)
+
+    # Set Text1 (certificate reference) on the parent field so it
+    # propagates to all child fields across pages 1-8
+    ref_number = data.get("ahc_number", "")
+    try:
+        acro_fields = writer._root_object["/AcroForm"]["/Fields"]
+        for field_ref in acro_fields:
+            field = field_ref.get_object()
+            field_name = str(field.get("/T", ""))
+            if field_name == "Text1":
+                field[NameObject("/V")] = create_string_object(ref_number)
+                field[NameObject("/DV")] = create_string_object(ref_number)
+                if "/Kids" in field:
+                    for kid_ref in field["/Kids"]:
+                        kid = kid_ref.get_object()
+                        kid[NameObject("/V")] = create_string_object(ref_number)
+    except Exception:
+        pass  # Fall back to standard update if this fails
 
     output = io.BytesIO()
     writer.write(output)
