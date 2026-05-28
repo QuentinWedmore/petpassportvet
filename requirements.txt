@@ -2,3 +2,4 @@ flask
 pypdf[crypto]
 gunicorn
 cryptography
+reportlab
