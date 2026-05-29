@@ -1,6 +1,6 @@
 """
 Pet Passport Vet - AHC PDF Generation Web Service
-v3.6 - Text5 for vaccine name, reference numbers on all pages
+v3.7 - Courier Type1 font, reliable reference numbers
 """
 
 import os
@@ -25,32 +25,16 @@ TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "French.pdf")
 # ============================================================
 
 def get_courier_font_ref(writer):
-    """Extract the Courier font from an existing AP stream in the template."""
-    try:
-        reader = PdfReader(TEMPLATE_PATH)
-        for page in reader.pages:
-            if '/Annots' not in page:
-                continue
-            for annot in page['/Annots']:
-                obj = annot.get_object()
-                ap = obj.get('/AP')
-                if not ap:
-                    continue
-                ap_obj = ap.get_object()
-                if '/N' not in ap_obj:
-                    continue
-                n = ap_obj['/N'].get_object()
-                if '/Resources' not in n:
-                    continue
-                res = n['/Resources'].get_object()
-                if '/Font' not in res:
-                    continue
-                font_dict = res['/Font'].get_object()
-                if '/Cour' in font_dict:
-                    return writer._add_object(font_dict['/Cour'].get_object())
-    except Exception:
-        pass
-    return None
+    """
+    Create a standard Courier Type1 font reference.
+    Courier is a built-in PDF font — no embedding needed, works in all viewers.
+    """
+    courier_font = DictionaryObject({
+        NameObject('/Type'): NameObject('/Font'),
+        NameObject('/Subtype'): NameObject('/Type1'),
+        NameObject('/BaseFont'): NameObject('/Courier'),
+    })
+    return writer._add_object(courier_font)
 
 
 # ============================================================
@@ -438,7 +422,7 @@ def merge_pdfs(ahc_bytes, certified_copy_bytes):
 
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "3.6"})
+    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "3.7"})
 
 
 @app.route("/debug", methods=["GET"])
@@ -446,7 +430,7 @@ def debug():
     test = {"pet_species": "CANIS LUPUS FAMILIARIS", "pet_sex": "MALE",
             "pet_colour": "BLACK", "pet_breed": "LABRADOR",
             "pet_microchip": "958000080144977", "pet_dob": "17/03/2023"}
-    return jsonify({"i28_field": build_commodity_description2(test), "version": "3.6"})
+    return jsonify({"i28_field": build_commodity_description2(test), "version": "3.7"})
 
 
 @app.route("/generate", methods=["POST"])
