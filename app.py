@@ -438,7 +438,7 @@ def merge_pdfs(ahc_bytes, certified_copy_bytes):
 
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "3.2"})
+    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "3.6"})
 
 
 @app.route("/debug", methods=["GET"])
@@ -446,7 +446,7 @@ def debug():
     test = {"pet_species": "CANIS LUPUS FAMILIARIS", "pet_sex": "MALE",
             "pet_colour": "BLACK", "pet_breed": "LABRADOR",
             "pet_microchip": "958000080144977", "pet_dob": "17/03/2023"}
-    return jsonify({"i28_field": build_commodity_description2(test), "version": "3.2"})
+    return jsonify({"i28_field": build_commodity_description2(test), "version": "3.6"})
 
 
 @app.route("/generate", methods=["POST"])
