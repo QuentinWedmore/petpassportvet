@@ -1,6 +1,6 @@
 """
 Pet Passport Vet - AHC PDF Generation Web Service
-v3.2 - AP streams with font resources, no double-printing
+v3.6 - Text5 for vaccine name, reference numbers on all pages
 """
 
 import os
