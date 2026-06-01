@@ -1,6 +1,6 @@
 """
 Pet Passport Vet - AHC PDF Generation Web Service
-v3.8 - reference numbers stamped via merge_page overlay
+v4.2 - I.28 nudged down below column headers
 """
 
 import os
@@ -154,9 +154,11 @@ def build_commodity_description2(d):
 def format_address(raw_address):
     lines = [l.strip() for l in raw_address.replace('\r', '\n').split('\n') if l.strip()]
     if len(lines) <= 3:
-        return '\r'.join(lines)
+        # Leading blank line creates a small gap below the "Name" field above
+        return '\r' + '\r'.join(lines)
     combined = f"{lines[-2]}, {lines[-1]}"
-    return '\r'.join(lines[:-2] + [combined])[:4 * 40]
+    # Leading blank line creates a small gap below the "Name" field above
+    return '\r' + '\r'.join(lines[:-2] + [combined])
 
 
 # ============================================================
@@ -176,7 +178,7 @@ def get_field_values(d):
         {"field_id": "Address2",               "value": "FRANCE"},
         {"field_id": "Telephone2",             "value": d.get("owner_telephone", "")},
         {"field_id": "Commodity description",  "value": d.get("commodity_desc", "")},
-        {"field_id": "Commodity description2", "value": build_commodity_description2(d)},
+        # Commodity description2 (I.28) excluded — set via AP stream to control vertical position
         {"field_id": "Quantity",               "value": str(qty)},
         # Text1 excluded — set via AP stream
         {"field_id": "Text2",  "value": d.get("pet_microchip", "")},
@@ -263,12 +265,15 @@ def fill_ahc_bytes(data):
                 field_w = rect[2] - rect[0]
                 field_h = rect[3] - rect[1]
                 font_size = 6
-                line_height = font_size + 2  # 8pt between baselines
+                line_height = font_size + 1  # 7pt between baselines (tighter)
 
                 if len(lines) > 1:
-                    # Centre two lines vertically
-                    total_h = font_size + line_height
-                    start_y = (field_h + total_h) / 2 - font_size * 0.718
+                    # The field rect extends slightly above the visible cell's top border,
+                    # so anchor the block from the BOTTOM: line 2 sits ~3.5pt up from the
+                    # field bottom, line 1 one line-height above it. This keeps the first
+                    # line clear of the visible top border.
+                    line1_baseline = 3.5 + line_height
+                    start_y = line1_baseline
                 else:
                     # Centre single line
                     start_y = (field_h - font_size) / 2 + font_size * 0.212
@@ -308,6 +313,55 @@ def fill_ahc_bytes(data):
                 obj[NameObject('/AP')] = ap_dict
 
             # Text13: leave empty (Text5 handles vaccine name for row 1)
+
+            # Commodity description2 (I.28 identification row): nudge the text down
+            # a few points so it isn't sitting right against the column headers.
+            if name == 'Commodity description2':
+                i28_value = build_commodity_description2(data)
+                i28_lines = i28_value.split('\r')
+                rect = [float(x) for x in obj.get('/Rect', [0, 0, 476, 120])]
+                field_w = rect[2] - rect[0]
+                field_h = rect[3] - rect[1]
+                font_size = 8
+                line_height = font_size + 1.5  # 9.5pt between baselines
+
+                # Default top-aligned baseline would be near field_h - font_size - 2.
+                # Drop it by ~5pt to create a small gap below the column headers.
+                top_pad = 2 + 5  # original 2pt padding + 5pt nudge
+                start_y = field_h - font_size - top_pad
+
+                text_ops = f"2 {start_y:.3f} Td\n({i28_lines[0]}) Tj\n"
+                for line in i28_lines[1:]:
+                    text_ops += f"0 -{line_height:.3f} Td\n({line}) Tj\n"
+
+                stream_content = (
+                    f"q\n/Tx BMC \nq\n"
+                    f"2 1 {field_w-4:.3f} {field_h-2:.3f} re\nW\n"
+                    f"BT\n/Cour {font_size} Tf 0 g\n"
+                    f"{text_ops}"
+                    f"ET\nQ\nEMC\nQ\n"
+                ).encode('latin-1')
+
+                stream_obj = DecodedStreamObject()
+                stream_obj.set_data(stream_content)
+                stream_obj[NameObject('/Type')] = NameObject('/XObject')
+                stream_obj[NameObject('/Subtype')] = NameObject('/Form')
+                stream_obj[NameObject('/BBox')] = ArrayObject([
+                    NumberObject(0), NumberObject(0),
+                    NumberObject(round(field_w, 3)), NumberObject(round(field_h, 3))
+                ])
+                if font_ref is not None:
+                    fd = DictionaryObject()
+                    fd[NameObject('/Cour')] = font_ref
+                    rs = DictionaryObject()
+                    rs[NameObject('/Font')] = fd
+                    stream_obj[NameObject('/Resources')] = rs
+
+                ap_ref = writer._add_object(stream_obj)
+                obj[NameObject('/V')] = create_string_object(i28_value)
+                ap_dict = DictionaryObject()
+                ap_dict[NameObject('/N')] = ap_ref
+                obj[NameObject('/AP')] = ap_dict
 
     # Stamp the certificate reference number onto pages 1-8 as real page content.
     # This is the reliable cross-viewer method (works in Mac Preview, Chrome, Acrobat).
@@ -461,7 +515,7 @@ def merge_pdfs(ahc_bytes, certified_copy_bytes):
 
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "3.8"})
+    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "4.2"})
 
 
 @app.route("/debug", methods=["GET"])
@@ -469,7 +523,7 @@ def debug():
     test = {"pet_species": "CANIS LUPUS FAMILIARIS", "pet_sex": "MALE",
             "pet_colour": "BLACK", "pet_breed": "LABRADOR",
             "pet_microchip": "958000080144977", "pet_dob": "17/03/2023"}
-    return jsonify({"i28_field": build_commodity_description2(test), "version": "3.8"})
+    return jsonify({"i28_field": build_commodity_description2(test), "version": "4.2"})
 
 
 @app.route("/generate", methods=["POST"])
