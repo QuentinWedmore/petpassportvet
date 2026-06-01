@@ -1,6 +1,6 @@
 """
 Pet Passport Vet - AHC PDF Generation Web Service
-v3.7 - Courier Type1 font, reliable reference numbers
+v3.8 - reference numbers stamped via merge_page overlay
 """
 
 import os
@@ -10,6 +10,7 @@ from pypdf import PdfReader, PdfWriter
 from pypdf.generic import (NameObject, create_string_object, DecodedStreamObject,
                             DictionaryObject, ArrayObject, NumberObject)
 from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
@@ -233,8 +234,9 @@ def fill_ahc_bytes(data):
     # Get Courier font reference for Mac Preview compatibility
     font_ref = get_courier_font_ref(writer)
 
-    # Set AP streams for Text1 (cert reference, pages 1-8) and Text13 (vaccine name)
-    vaccine_lines = split_to_lines(vaccine_name, max_chars=9) if vaccine_name else None
+    # NOTE: The certificate reference number (Text1 + child fields on pages 1-8)
+    # is NOT set via form-field AP streams — those fail to render in Mac Preview.
+    # It is stamped onto pages as real content via stamp_reference_numbers() below.
 
     for page_num, page in enumerate(writer.pages, 1):
         if '/Annots' not in page:
@@ -243,16 +245,6 @@ def fill_ahc_bytes(data):
             obj = annot.get_object()
             name = str(obj.get('/T', ''))
             parent = obj.get('/Parent')
-
-            # Named Text1 field (page 1)
-            if name == 'Text1':
-                set_ap(writer, obj, ref_number, font_size=8, font_ref=font_ref)
-
-            # Unnamed children of Text1 (II.a header, pages 1-8)
-            if not name and parent:
-                parent_obj = parent.get_object()
-                if str(parent_obj.get('/T', '')) == 'Text1':
-                    set_ap(writer, obj, ref_number, font_size=8, font_ref=font_ref)
 
             # Text5: vaccine name (+ manufacturer if provided) — this field sits fully
             # within the visible table row, unlike Text13 which is mostly below it.
@@ -317,10 +309,57 @@ def fill_ahc_bytes(data):
 
             # Text13: leave empty (Text5 handles vaccine name for row 1)
 
+    # Stamp the certificate reference number onto pages 1-8 as real page content.
+    # This is the reliable cross-viewer method (works in Mac Preview, Chrome, Acrobat).
+    stamp_reference_numbers(writer, ref_number)
+
     output = io.BytesIO()
     writer.write(output)
     output.seek(0)
     return output
+
+
+# Certificate reference field positions per page (PDF coords, bottom-up).
+# These are the II.a / I.2 "Certificate reference No" boxes.
+REF_NUMBER_RECTS = {
+    1: [303.1, 658.0, 428.4, 672.2],
+    2: [275.2, 626.9, 400.5, 642.3],
+    3: [265.1, 647.8, 390.4, 663.2],
+    4: [232.5, 659.5, 357.8, 674.9],
+    5: [229.0, 652.9, 354.3, 668.3],
+    6: [225.8, 649.4, 351.1, 664.8],
+    7: [226.1, 648.1, 351.4, 663.5],
+    8: [218.7, 647.1, 344.0, 662.5],
+}
+
+
+def stamp_reference_numbers(writer, ref_number):
+    """
+    Stamp the certificate reference number onto each page (1-8) as permanent
+    page content using a reportlab overlay merged via merge_page().
+    Unlike form-field appearance streams, this renders in every PDF viewer
+    including Mac Preview.
+    """
+    if not ref_number:
+        return
+    for page_num, rect in REF_NUMBER_RECTS.items():
+        if page_num > len(writer.pages):
+            continue
+        page = writer.pages[page_num - 1]
+        pw = float(page.mediabox.width)
+        ph = float(page.mediabox.height)
+
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf, pagesize=(pw, ph))
+        c.setFont("Courier", 9)
+        c.setFillColorRGB(0, 0, 0)
+        # baseline at x1+2, y1+3 to sit neatly inside the box
+        c.drawString(rect[0] + 2, rect[1] + 3, ref_number)
+        c.save()
+        buf.seek(0)
+
+        overlay_page = PdfReader(buf).pages[0]
+        page.merge_page(overlay_page)
 
 
 # ============================================================
@@ -422,7 +461,7 @@ def merge_pdfs(ahc_bytes, certified_copy_bytes):
 
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "3.7"})
+    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "3.8"})
 
 
 @app.route("/debug", methods=["GET"])
@@ -430,7 +469,7 @@ def debug():
     test = {"pet_species": "CANIS LUPUS FAMILIARIS", "pet_sex": "MALE",
             "pet_colour": "BLACK", "pet_breed": "LABRADOR",
             "pet_microchip": "958000080144977", "pet_dob": "17/03/2023"}
-    return jsonify({"i28_field": build_commodity_description2(test), "version": "3.7"})
+    return jsonify({"i28_field": build_commodity_description2(test), "version": "3.8"})
 
 
 @app.route("/generate", methods=["POST"])
