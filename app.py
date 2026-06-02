@@ -182,7 +182,7 @@ def _draw_overlay_for_page(c, page_num, data):
     if page_num == 1:
         text("Name1", data.get("owner_name", ""))
         text_lines("Address1", address_lines(data.get("owner_address", "")),
-                   size=9, line_gap=2)
+                   size=8, line_gap=0.5)
         text("Telephone1", data.get("owner_telephone", ""))
         text("Name2", data.get("owner_name", ""))
         text("Address2", "FRANCE")
