@@ -1,6 +1,6 @@
 """
 Pet Passport Vet - AHC PDF Generation Web Service
-v4.2 - I.28 nudged down below column headers
+v4.3 - France checkboxes: set /AS as well as /V so ticks render in all viewers
 """
 
 import os
@@ -53,9 +53,7 @@ def make_ap_stream(writer, text, rect, font_size=8, lines=None, font_ref=None):
     h = y2 - y1
 
     if lines and len(lines) > 1:
-        # For multiline: fit both lines within the field height
-        # line1 near top, line2 just below with minimal spacing
-        line_height = font_size + 1  # tight spacing to keep within field
+        line_height = font_size + 1
         total_text_h = font_size + line_height
         start_y = min(h - font_size - 1, h * 0.75)
         text_ops = f"2 {start_y:.3f} Td\n"
@@ -84,7 +82,6 @@ def make_ap_stream(writer, text, rect, font_size=8, lines=None, font_ref=None):
         NumberObject(round(w, 3)), NumberObject(round(h, 3))
     ])
 
-    # Font resources — required for Mac Preview and other strict PDF viewers
     if font_ref is not None:
         font_dict = DictionaryObject()
         font_dict[NameObject('/Cour')] = font_ref
@@ -154,17 +151,13 @@ def build_commodity_description2(d):
 def format_address(raw_address):
     lines = [l.strip() for l in raw_address.replace('\r', '\n').split('\n') if l.strip()]
     if len(lines) <= 3:
-        # Leading blank line creates a small gap below the "Name" field above
         return '\r' + '\r'.join(lines)
     combined = f"{lines[-2]}, {lines[-1]}"
-    # Leading blank line creates a small gap below the "Name" field above
     return '\r' + '\r'.join(lines[:-2] + [combined])
 
 
 # ============================================================
 # FIELD MAPPING
-# Note: Text1 and Text13 are excluded here — handled via AP streams below
-# to avoid double-rendering
 # ============================================================
 
 def get_field_values(d):
@@ -178,17 +171,13 @@ def get_field_values(d):
         {"field_id": "Address2",               "value": "FRANCE"},
         {"field_id": "Telephone2",             "value": d.get("owner_telephone", "")},
         {"field_id": "Commodity description",  "value": d.get("commodity_desc", "")},
-        # Commodity description2 (I.28) excluded — set via AP stream to control vertical position
         {"field_id": "Quantity",               "value": str(qty)},
-        # Text1 excluded — set via AP stream
         {"field_id": "Text2",  "value": d.get("pet_microchip", "")},
         {"field_id": "Text3",  "value": d.get("rabies_date", "")},
         {"field_id": "Text4",  "value": d.get("rabies_date", "")},
-        # Text5 excluded — set via AP stream (vaccine name + manufacturer)
         {"field_id": "Text6",  "value": d.get("batch_number", "")},
         {"field_id": "Text7",  "value": d.get("valid_from", "")},
         {"field_id": "Text8",  "value": d.get("valid_to", "")},
-        # Text13 excluded — set via AP stream
         {"field_id": "Check 2",  "value": "/Yes"},
         {"field_id": "Check 3",  "value": "/Yes"},
         {"field_id": "Check 5",  "value": "/Yes"},
@@ -217,6 +206,29 @@ def get_field_values(d):
 
 
 # ============================================================
+# FRANCE CHECKBOX FIX
+# ============================================================
+
+# update_page_form_field_values sets /V but not /AS on checkboxes.
+# Without /AS the tick appearance stream is not selected, so the box
+# renders blank in strict viewers (Mac Preview, some mobile readers).
+# Widget indices on page 9 (0-indexed page 8) confirmed against French.pdf.
+FRANCE_CHECKBOX_WIDGETS = {
+    1:  "Check 16",
+    26: "Check 19",
+    31: "Check 20",
+}
+
+def apply_france_checkbox_as(writer):
+    """Set /AS = /Yes on the three France-specific checkboxes on page 9."""
+    page9 = writer.pages[8]
+    annots = page9['/Annots']
+    for idx in FRANCE_CHECKBOX_WIDGETS:
+        obj = annots[idx].get_object()
+        obj[NameObject('/AS')] = NameObject('/Yes')
+
+
+# ============================================================
 # FILL THE AHC PDF
 # ============================================================
 
@@ -225,20 +237,18 @@ def fill_ahc_bytes(data):
     writer = PdfWriter()
     writer.append(reader)
 
-    # Standard field updates (excludes Text1 and Text13)
+    # Standard field updates
     updates = {fv["field_id"]: fv["value"] for fv in get_field_values(data)}
     for page in writer.pages:
         writer.update_page_form_field_values(page, updates, auto_regenerate=False)
 
+    # Fix checkbox appearance state for France-specific ticks
+    apply_france_checkbox_as(writer)
+
     ref_number = data.get("ahc_number", "")
     vaccine_name = data.get("vaccine_name", "").strip().upper()
 
-    # Get Courier font reference for Mac Preview compatibility
     font_ref = get_courier_font_ref(writer)
-
-    # NOTE: The certificate reference number (Text1 + child fields on pages 1-8)
-    # is NOT set via form-field AP streams — those fail to render in Mac Preview.
-    # It is stamped onto pages as real content via stamp_reference_numbers() below.
 
     for page_num, page in enumerate(writer.pages, 1):
         if '/Annots' not in page:
@@ -246,14 +256,10 @@ def fill_ahc_bytes(data):
         for annot in page['/Annots']:
             obj = annot.get_object()
             name = str(obj.get('/T', ''))
-            parent = obj.get('/Parent')
 
-            # Text5: vaccine name (+ manufacturer if provided) — this field sits fully
-            # within the visible table row, unlike Text13 which is mostly below it.
-            # Use two lines if name is long, centred vertically in the field.
+            # Text5: vaccine name (+ manufacturer if provided)
             if name == 'Text5' and vaccine_name:
                 mfr = data.get("vaccine_manufacturer", "").strip().upper()
-                # Build lines: manufacturer on line 1 if present, name on line 1 (or 2)
                 if mfr:
                     lines = [mfr, vaccine_name]
                 else:
@@ -265,17 +271,12 @@ def fill_ahc_bytes(data):
                 field_w = rect[2] - rect[0]
                 field_h = rect[3] - rect[1]
                 font_size = 6
-                line_height = font_size + 1  # 7pt between baselines (tighter)
+                line_height = font_size + 1
 
                 if len(lines) > 1:
-                    # The field rect extends slightly above the visible cell's top border,
-                    # so anchor the block from the BOTTOM: line 2 sits ~3.5pt up from the
-                    # field bottom, line 1 one line-height above it. This keeps the first
-                    # line clear of the visible top border.
                     line1_baseline = 3.5 + line_height
                     start_y = line1_baseline
                 else:
-                    # Centre single line
                     start_y = (field_h - font_size) / 2 + font_size * 0.212
 
                 text_ops = f"2 {start_y:.3f} Td\n({lines[0]}) Tj\n"
@@ -312,10 +313,7 @@ def fill_ahc_bytes(data):
                 ap_dict[NameObject('/N')] = ap_ref
                 obj[NameObject('/AP')] = ap_dict
 
-            # Text13: leave empty (Text5 handles vaccine name for row 1)
-
-            # Commodity description2 (I.28 identification row): nudge the text down
-            # a few points so it isn't sitting right against the column headers.
+            # Commodity description2 (I.28): nudge text down below column headers
             if name == 'Commodity description2':
                 i28_value = build_commodity_description2(data)
                 i28_lines = i28_value.split('\r')
@@ -323,11 +321,9 @@ def fill_ahc_bytes(data):
                 field_w = rect[2] - rect[0]
                 field_h = rect[3] - rect[1]
                 font_size = 8
-                line_height = font_size + 1.5  # 9.5pt between baselines
+                line_height = font_size + 1.5
 
-                # Default top-aligned baseline would be near field_h - font_size - 2.
-                # Drop it by ~5pt to create a small gap below the column headers.
-                top_pad = 2 + 5  # original 2pt padding + 5pt nudge
+                top_pad = 2 + 5
                 start_y = field_h - font_size - top_pad
 
                 text_ops = f"2 {start_y:.3f} Td\n({i28_lines[0]}) Tj\n"
@@ -363,8 +359,6 @@ def fill_ahc_bytes(data):
                 ap_dict[NameObject('/N')] = ap_ref
                 obj[NameObject('/AP')] = ap_dict
 
-    # Stamp the certificate reference number onto pages 1-8 as real page content.
-    # This is the reliable cross-viewer method (works in Mac Preview, Chrome, Acrobat).
     stamp_reference_numbers(writer, ref_number)
 
     output = io.BytesIO()
@@ -373,8 +367,10 @@ def fill_ahc_bytes(data):
     return output
 
 
-# Certificate reference field positions per page (PDF coords, bottom-up).
-# These are the II.a / I.2 "Certificate reference No" boxes.
+# ============================================================
+# REFERENCE NUMBER STAMP
+# ============================================================
+
 REF_NUMBER_RECTS = {
     1: [303.1, 658.0, 428.4, 672.2],
     2: [275.2, 626.9, 400.5, 642.3],
@@ -391,8 +387,6 @@ def stamp_reference_numbers(writer, ref_number):
     """
     Stamp the certificate reference number onto each page (1-8) as permanent
     page content using a reportlab overlay merged via merge_page().
-    Unlike form-field appearance streams, this renders in every PDF viewer
-    including Mac Preview.
     """
     if not ref_number:
         return
@@ -407,7 +401,6 @@ def stamp_reference_numbers(writer, ref_number):
         c = canvas.Canvas(buf, pagesize=(pw, ph))
         c.setFont("Courier", 9)
         c.setFillColorRGB(0, 0, 0)
-        # baseline at x1+2, y1+3 to sit neatly inside the box
         c.drawString(rect[0] + 2, rect[1] + 3, ref_number)
         c.save()
         buf.seek(0)
@@ -515,7 +508,7 @@ def merge_pdfs(ahc_bytes, certified_copy_bytes):
 
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "4.2"})
+    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "4.3"})
 
 
 @app.route("/debug", methods=["GET"])
@@ -523,7 +516,7 @@ def debug():
     test = {"pet_species": "CANIS LUPUS FAMILIARIS", "pet_sex": "MALE",
             "pet_colour": "BLACK", "pet_breed": "LABRADOR",
             "pet_microchip": "958000080144977", "pet_dob": "17/03/2023"}
-    return jsonify({"i28_field": build_commodity_description2(test), "version": "4.2"})
+    return jsonify({"i28_field": build_commodity_description2(test), "version": "4.3"})
 
 
 @app.route("/generate", methods=["POST"])
