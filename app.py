@@ -1,6 +1,9 @@
 """
 Pet Passport Vet - AHC PDF Generation Web Service
-v4.3 - France checkboxes: set /AS as well as /V so ticks render in all viewers
+v5.0 - Minimal-touch: fill only pet/owner-specific data.
+       Quentin's practice details, checkboxes, and all strikethroughs are
+       baked into the template (FRANCE_WITH_OWNER_PART_COMPLETED.pdf) and are
+       deliberately left untouched.
 """
 
 import os
@@ -158,6 +161,17 @@ def format_address(raw_address):
 
 # ============================================================
 # FIELD MAPPING
+#
+# IMPORTANT (v5.0): This now fills ONLY pet/owner-specific data.
+# The following are baked into the template and deliberately NOT set here,
+# so the app never overwrites Quentin's saved working file:
+#   - Practice details: LCA, OV name, OV qualification, OV address,
+#     OV telephone, Placedate
+#   - All checkboxes: Check 2,3,5,6,7,8,9,10,13,14,16,19,20
+#   - All strikethroughs (these live in the page content, not form fields)
+#
+# Text1 / Text13 remain excluded (Text1 handled via stamp; Text13 unused).
+# Commodity description2 (I.28) and Text5 are handled via AP streams below.
 # ============================================================
 
 def get_field_values(d):
@@ -166,7 +180,6 @@ def get_field_values(d):
         {"field_id": "Name1",                  "value": d.get("owner_name", "")},
         {"field_id": "Address1",               "value": format_address(d.get("owner_address", ""))},
         {"field_id": "Telephone1",             "value": d.get("owner_telephone", "")},
-        {"field_id": "LCA",                    "value": "Animal and Plant Health Agency"},
         {"field_id": "Name2",                  "value": d.get("owner_name", "")},
         {"field_id": "Address2",               "value": "FRANCE"},
         {"field_id": "Telephone2",             "value": d.get("owner_telephone", "")},
@@ -178,54 +191,14 @@ def get_field_values(d):
         {"field_id": "Text6",  "value": d.get("batch_number", "")},
         {"field_id": "Text7",  "value": d.get("valid_from", "")},
         {"field_id": "Text8",  "value": d.get("valid_to", "")},
-        {"field_id": "Check 2",  "value": "/Yes"},
-        {"field_id": "Check 3",  "value": "/Yes"},
-        {"field_id": "Check 5",  "value": "/Yes"},
-        {"field_id": "Check 6",  "value": "/Yes"},
-        {"field_id": "Check 8",  "value": "/Yes"},
-        {"field_id": "Check 9",  "value": "/Yes"},
-        {"field_id": "Check 10", "value": "/Yes"},
-        {"field_id": "Check 13", "value": "/Yes"},
-        {"field_id": "Check 14", "value": "/Yes"},
-        {"field_id": "OV name",          "value": d.get("ov_name", "")},
-        {"field_id": "OV qualification", "value": d.get("ov_qualification", "")},
-        {"field_id": "OV address",       "value": d.get("ov_address", "")},
-        {"field_id": "OV telephone",     "value": d.get("ov_telephone", "")},
-        {"field_id": "Date",             "value": d.get("issue_date", "")},
+        {"field_id": "Date",         "value": d.get("issue_date", "")},
         {"field_id": "Transponder",  "value": d.get("pet_microchip", "")},
         {"field_id": "AHC number",   "value": d.get("ahc_number", "")},
         {"field_id": "AHC number1",  "value": d.get("ahc_number", "") if qty >= 2 else ""},
         {"field_id": "AHC number2",  "value": d.get("ahc_number", "") if qty >= 3 else ""},
         {"field_id": "AHC number3",  "value": d.get("ahc_number", "") if qty >= 4 else ""},
         {"field_id": "AHC number4",  "value": d.get("ahc_number", "") if qty >= 5 else ""},
-        {"field_id": "Placedate",    "value": d.get("place_date", "")},
-        {"field_id": "Check 16",     "value": "/Yes"},
-        {"field_id": "Check 19",     "value": "/Yes"},
-        {"field_id": "Check 20",     "value": "/Yes"},
     ]
-
-
-# ============================================================
-# FRANCE CHECKBOX FIX
-# ============================================================
-
-# update_page_form_field_values sets /V but not /AS on checkboxes.
-# Without /AS the tick appearance stream is not selected, so the box
-# renders blank in strict viewers (Mac Preview, some mobile readers).
-# Widget indices on page 9 (0-indexed page 8) confirmed against French.pdf.
-FRANCE_CHECKBOX_WIDGETS = {
-    1:  "Check 16",
-    26: "Check 19",
-    31: "Check 20",
-}
-
-def apply_france_checkbox_as(writer):
-    """Set /AS = /Yes on the three France-specific checkboxes on page 9."""
-    page9 = writer.pages[8]
-    annots = page9['/Annots']
-    for idx in FRANCE_CHECKBOX_WIDGETS:
-        obj = annots[idx].get_object()
-        obj[NameObject('/AS')] = NameObject('/Yes')
 
 
 # ============================================================
@@ -237,13 +210,10 @@ def fill_ahc_bytes(data):
     writer = PdfWriter()
     writer.append(reader)
 
-    # Standard field updates
+    # Standard field updates — pet/owner-specific data only.
     updates = {fv["field_id"]: fv["value"] for fv in get_field_values(data)}
     for page in writer.pages:
         writer.update_page_form_field_values(page, updates, auto_regenerate=False)
-
-    # Fix checkbox appearance state for France-specific ticks
-    apply_france_checkbox_as(writer)
 
     ref_number = data.get("ahc_number", "")
     vaccine_name = data.get("vaccine_name", "").strip().upper()
@@ -508,7 +478,7 @@ def merge_pdfs(ahc_bytes, certified_copy_bytes):
 
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "4.3"})
+    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "5.0"})
 
 
 @app.route("/debug", methods=["GET"])
@@ -516,7 +486,7 @@ def debug():
     test = {"pet_species": "CANIS LUPUS FAMILIARIS", "pet_sex": "MALE",
             "pet_colour": "BLACK", "pet_breed": "LABRADOR",
             "pet_microchip": "958000080144977", "pet_dob": "17/03/2023"}
-    return jsonify({"i28_field": build_commodity_description2(test), "version": "4.3"})
+    return jsonify({"i28_field": build_commodity_description2(test), "version": "5.0"})
 
 
 @app.route("/generate", methods=["POST"])
