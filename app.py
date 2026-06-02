@@ -1,9 +1,13 @@
 """
 Pet Passport Vet - AHC PDF Generation Web Service
-v5.0 - Minimal-touch: fill only pet/owner-specific data.
-       Quentin's practice details, checkboxes, and all strikethroughs are
-       baked into the template (FRANCE_WITH_OWNER_PART_COMPLETED.pdf) and are
-       deliberately left untouched.
+v5.1 - Minimal-touch + viewer-proof strikethroughs.
+       Fills only pet/owner-specific data; Quentin's practice details and
+       checkboxes are left to the template.
+       The template's strikethroughs are stored as fragile orphan widget
+       annotations (no field type/value), which strict viewers (Acrobat,
+       Mac Preview) drop when they regenerate form appearances. To make them
+       viewer-independent, v5.1 re-draws every strike as permanent page
+       content (via merge_page) and removes the original strike widgets.
 """
 
 import os
@@ -331,6 +335,11 @@ def fill_ahc_bytes(data):
 
     stamp_reference_numbers(writer, ref_number)
 
+    # Make strikethroughs viewer-proof: redraw as page content, then drop the
+    # fragile widget annotations that strict viewers would otherwise regenerate.
+    bake_strikethroughs(writer)
+    remove_strike_widgets(writer)
+
     output = io.BytesIO()
     writer.write(output)
     output.seek(0)
@@ -380,8 +389,113 @@ def stamp_reference_numbers(writer, ref_number):
 
 
 # ============================================================
-# CERTIFIED COPY PAGE
+# STRIKETHROUGHS — viewer-proof baking
+#
+# Each (x0, y, x1) is a horizontal strike segment in PDF points (origin
+# bottom-left), captured from the template's strike widgets. We redraw these
+# as real page content so no viewer can drop them, then delete the original
+# thin-line widget annotations. If the template's strike layout ever changes,
+# re-run the extraction script to regenerate this table.
 # ============================================================
+
+STRIKE_SEGMENTS = {
+    2: [
+        (145.21, 445.64, 256.45), (141.35, 433.19, 544.96), (142.83, 422.79, 544.44),
+        (141.74, 412.39, 404.88), (142.36, 400.32, 545.46), (143.79, 390.46, 545.98),
+        (141.89, 379.12, 400.22), (109.41, 355.08, 545.97), (142.31, 344.91, 297.81),
+        (112.09, 331.67, 548.65), (141.72, 321.21, 547.51), (141.8, 311.21, 508.21),
+        (141.13, 298.5, 546.92), (140.78, 288.78, 546.58), (141.08, 278.37, 546.87),
+        (140.7, 267.86, 244.99), (141.33, 255.89, 372.36), (141.55, 243.18, 517.6),
+        (129.9, 208.39, 545.84), (133.0, 198.03, 545.44), (133.12, 187.95, 545.24),
+        (133.11, 177.1, 545.55), (133.22, 167.06, 545.13), (132.75, 156.33, 545.44),
+        (134.15, 146.25, 545.2), (132.91, 135.78, 252.78),
+    ],
+    3: [
+        (132.68, 626.76, 546.44), (168.29, 616.33, 545.83), (168.42, 606.29, 545.92),
+        (168.4, 595.4, 545.94), (168.51, 585.4, 546.1), (168.05, 574.74, 545.82),
+        (168.21, 564.52, 245.09), (169.89, 552.9, 548.95), (168.11, 539.82, 547.07),
+        (168.75, 529.4, 547.6), (168.0, 518.49, 547.17), (167.94, 508.89, 547.0),
+        (167.42, 486.63, 546.48), (168.78, 475.58, 547.84), (168.72, 466.41, 547.78),
+        (168.66, 455.63, 547.72), (168.6, 445.65, 365.48), (162.2, 432.36, 546.06),
+        (166.37, 421.82, 547.18), (165.49, 411.24, 546.3), (166.64, 401.3, 547.45),
+        (165.78, 390.88, 546.59), (165.72, 380.1, 546.53), (165.66, 370.96, 546.47),
+        (166.48, 360.0, 547.29), (166.35, 349.78, 269.34), (164.62, 337.61, 548.48),
+        (164.37, 327.04, 548.23), (165.29, 316.27, 549.16), (165.05, 305.7, 548.91),
+        (165.36, 296.43, 549.22), (165.11, 285.86, 548.97), (166.04, 275.08, 549.9),
+        (165.79, 264.51, 549.65), (166.31, 254.61, 550.18), (167.24, 243.91, 548.49),
+        (166.99, 233.26, 497.48), (164.21, 221.59, 548.08), (164.77, 211.42, 548.63),
+        (164.09, 200.44, 547.96), (164.65, 190.28, 548.51), (165.36, 180.1, 549.22),
+        (165.91, 169.93, 549.78), (165.23, 158.96, 549.1), (165.79, 148.79, 549.65),
+        (165.47, 138.08, 549.33), (166.02, 127.91, 549.88), (166.73, 117.69, 548.09),
+        (167.29, 107.57, 547.22), (166.61, 96.6, 546.54), (167.16, 86.48, 547.1),
+    ],
+    4: [
+        (167.47, 653.16, 546.97), (167.33, 642.19, 546.29), (167.78, 631.98, 350.46),
+        (131.22, 355.56, 546.5), (131.5, 344.99, 546.78), (131.71, 334.22, 546.99),
+        (131.99, 323.64, 547.27), (132.51, 314.52, 547.79), (132.79, 303.94, 548.08),
+        (133.0, 292.99, 548.28), (132.95, 282.85, 196.21), (130.98, 270.39, 546.26),
+        (129.39, 259.23, 437.62),
+    ],
+    9: [
+        (75.62, 693.93, 108.97), (103.79, 693.08, 524.18), (74.98, 679.99, 144.35),
+        (163.92, 679.59, 217.02), (207.97, 679.12, 518.86), (189.82, 666.28, 392.86),
+        (284.22, 627.88, 323.58), (315.74, 628.14, 525.33), (70.3, 614.12, 481.71),
+        (149.89, 575.26, 232.12), (220.37, 575.01, 526.76), (70.42, 561.84, 328.24),
+        (142.1, 370.53, 293.17), (143.23, 351.97, 524.97), (142.69, 338.7, 524.42),
+        (142.98, 325.85, 524.72), (141.87, 312.6, 172.99), (140.91, 293.36, 522.64),
+        (142.95, 279.67, 524.69), (141.12, 266.84, 522.86), (143.17, 253.44, 524.4),
+        (142.02, 239.92, 206.22), (130.45, 199.83, 189.77), (179.74, 199.47, 525.12),
+        (68.7, 185.76, 345.27), (414.44, 185.56, 498.31), (486.31, 185.72, 524.17),
+        (70.6, 172.84, 524.77), (69.9, 159.63, 124.0),
+    ],
+}
+
+
+def bake_strikethroughs(writer):
+    """Draw every strike segment as permanent page content via a merged overlay."""
+    for page_num, segments in STRIKE_SEGMENTS.items():
+        if page_num > len(writer.pages):
+            continue
+        page = writer.pages[page_num - 1]
+        pw = float(page.mediabox.width)
+        ph = float(page.mediabox.height)
+
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf, pagesize=(pw, ph))
+        c.setStrokeColorRGB(0, 0, 0)
+        c.setLineWidth(0.8)
+        for x0, y, x1 in segments:
+            c.line(x0, y, x1, y)
+        c.save()
+        buf.seek(0)
+
+        overlay_page = PdfReader(buf).pages[0]
+        page.merge_page(overlay_page)
+
+
+def remove_strike_widgets(writer):
+    """
+    Delete the original thin-line strike widget annotations on the strike pages,
+    so the only thing drawing those lines is the baked page content. This makes
+    the strikes immune to form-appearance regeneration in strict viewers.
+    """
+    for page_num in STRIKE_SEGMENTS:
+        if page_num > len(writer.pages):
+            continue
+        page = writer.pages[page_num - 1]
+        annots = page.get('/Annots')
+        if not annots:
+            continue
+        kept = ArrayObject()
+        for a in annots.get_object():
+            o = a.get_object()
+            rect = [float(x) for x in o.get('/Rect', [0, 0, 0, 0])]
+            w = rect[2] - rect[0]
+            h = rect[3] - rect[1]
+            is_strike_widget = (o.get('/Subtype') == '/Widget' and h < 2 and w > 30)
+            if not is_strike_widget:
+                kept.append(a)
+        page[NameObject('/Annots')] = kept
 
 def generate_certified_copy(data):
     buffer = io.BytesIO()
@@ -478,7 +592,7 @@ def merge_pdfs(ahc_bytes, certified_copy_bytes):
 
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "5.0"})
+    return jsonify({"status": "ok", "service": "Pet Passport Vet AHC Generator", "version": "5.1"})
 
 
 @app.route("/debug", methods=["GET"])
@@ -486,7 +600,7 @@ def debug():
     test = {"pet_species": "CANIS LUPUS FAMILIARIS", "pet_sex": "MALE",
             "pet_colour": "BLACK", "pet_breed": "LABRADOR",
             "pet_microchip": "958000080144977", "pet_dob": "17/03/2023"}
-    return jsonify({"i28_field": build_commodity_description2(test), "version": "5.0"})
+    return jsonify({"i28_field": build_commodity_description2(test), "version": "5.1"})
 
 
 @app.route("/generate", methods=["POST"])
